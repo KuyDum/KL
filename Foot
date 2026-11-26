@@ -1,0 +1,264 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Functions = ReplicatedStorage
+    :WaitForChild("Chest")
+    :WaitForChild("Remotes")
+    :WaitForChild("Functions")
+
+local BuyKey = Functions:WaitForChild("BuyKey")
+local UseKey = Functions:WaitForChild("UseKey")
+
+-- ===== State =====
+local buyOn, openOn = false, false
+local buyToken, openToken = 0, 0
+local buyCount, openCount = 0, 0
+local lastErr = ""
+
+-- ===== เลือกที่วาง GUI =====
+local ok, guiParent = pcall(function()
+    return (gethui and gethui()) or game:GetService("CoreGui")
+end)
+if not ok or not guiParent then
+    guiParent = Players.LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local old = guiParent:FindFirstChild("ChestAutoGui")
+if old then old:Destroy() end
+
+-- ===== สร้าง GUI =====
+local FULL_H = 345
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "ChestAutoGui"
+gui.ResetOnSpawn = false
+gui.Parent = guiParent
+
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 240, 0, FULL_H)
+main.Position = UDim2.new(0.5, -120, 0.3, 0)
+main.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+main.BorderSizePixel = 0
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -40, 0, 32)
+title.BackgroundColor3 = Color3.fromRGB(45, 45, 58)
+title.BorderSizePixel = 0
+title.Text = "  Chest Auto"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.Parent = main
+Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+local minBtn = Instance.new("TextButton")
+minBtn.Size = UDim2.new(0, 40, 0, 32)
+minBtn.Position = UDim2.new(1, -40, 0, 0)
+minBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 58)
+minBtn.BorderSizePixel = 0
+minBtn.Text = "–"
+minBtn.TextColor3 = Color3.new(1, 1, 1)
+minBtn.Font = Enum.Font.GothamBold
+minBtn.TextSize = 18
+minBtn.Parent = main
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 8)
+
+local body = Instance.new("Frame")
+body.Size = UDim2.new(1, 0, 1, -32)
+body.Position = UDim2.new(0, 0, 0, 32)
+body.BackgroundTransparency = 1
+body.Parent = main
+
+local function makeLabel(text, y)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0, 90, 0, 28)
+    lbl.Position = UDim2.new(0, 10, 0, y)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(200, 200, 210)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 13
+    lbl.Parent = body
+end
+
+local function makeBox(labelText, default, y)
+    makeLabel(labelText, y)
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, -110, 0, 28)
+    box.Position = UDim2.new(0, 100, 0, y)
+    box.BackgroundColor3 = Color3.fromRGB(50, 50, 62)
+    box.BorderSizePixel = 0
+    box.Text = tostring(default)
+    box.TextColor3 = Color3.new(1, 1, 1)
+    box.ClearTextOnFocus = false
+    box.Font = Enum.Font.Gotham
+    box.TextSize = 13
+    box.Parent = body
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+    return box
+end
+
+local keyBox      = makeBox("ชื่อกุญแจ", "Iron Key", 10)
+local amountBox   = makeBox("จำนวนซื้อ", 100, 46)
+
+-- โหมดเปิด: กดเพื่อสลับ (สูงสุดแค่ Open10)
+local MODES = { "Open1", "Open10" }
+local modeIndex = #MODES
+
+makeLabel("โหมดเปิด", 82)
+local modeBtn = Instance.new("TextButton")
+modeBtn.Size = UDim2.new(1, -110, 0, 28)
+modeBtn.Position = UDim2.new(0, 100, 0, 82)
+modeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 62)
+modeBtn.BorderSizePixel = 0
+modeBtn.Text = MODES[modeIndex]
+modeBtn.TextColor3 = Color3.new(1, 1, 1)
+modeBtn.Font = Enum.Font.Gotham
+modeBtn.TextSize = 13
+modeBtn.Parent = body
+Instance.new("UICorner", modeBtn).CornerRadius = UDim.new(0, 6)
+modeBtn.MouseButton1Click:Connect(function()
+    modeIndex = modeIndex % #MODES + 1
+    modeBtn.Text = MODES[modeIndex]
+end)
+
+local buyDelayBox  = makeBox("หน่วงซื้อ (วิ)", 0.2, 118)
+local openDelayBox = makeBox("หน่วงสุ่ม (วิ)", 0.2, 154)
+
+local function getDelay(box)
+    return math.max(tonumber(box.Text) or 0.2, 0.05)
+end
+
+-- ===== ปุ่มสวิตช์ =====
+local ON_COLOR  = Color3.fromRGB(46, 160, 90)
+local OFF_COLOR = Color3.fromRGB(70, 70, 85)
+
+local function makeToggle(text, y, onChange)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -20, 0, 34)
+    btn.Position = UDim2.new(0, 10, 0, y)
+    btn.BorderSizePixel = 0
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 14
+    btn.Parent = body
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    local state = false
+    local function render()
+        btn.Text = text .. ": " .. (state and "เปิด" or "ปิด")
+        btn.BackgroundColor3 = state and ON_COLOR or OFF_COLOR
+    end
+    render()
+
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        render()
+        onChange(state)
+    end)
+    return btn
+end
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -20, 0, 44)
+status.Position = UDim2.new(0, 10, 0, 266)
+status.BackgroundTransparency = 1
+status.TextColor3 = Color3.fromRGB(180, 180, 190)
+status.TextWrapped = true
+status.Font = Enum.Font.Gotham
+status.TextSize = 12
+status.Parent = body
+
+local function refresh()
+    local s = string.format("ซื้อแล้ว: %d | เปิดแล้ว: %d", buyCount, openCount)
+    if lastErr ~= "" then s = s .. "\n" .. lastErr end
+    status.Text = s
+end
+refresh()
+
+-- ===== ฟังก์ชัน: ซื้อกุญแจ =====
+makeToggle("ซื้อกุญแจ", 194, function(state)
+    buyOn = state
+    buyToken += 1
+    if not state then return end
+    local myToken = buyToken
+    task.spawn(function()
+        while buyOn and myToken == buyToken do
+            local ok1, res = pcall(function()
+                return BuyKey:InvokeServer(keyBox.Text, tonumber(amountBox.Text) or 1)
+            end)
+            if ok1 then
+                buyCount += 1
+            else
+                lastErr = "ซื้อ error: " .. tostring(res)
+            end
+            refresh()
+            task.wait(getDelay(buyDelayBox))
+        end
+    end)
+end)
+
+-- ===== ฟังก์ชัน: สุ่มผล (เปิดหีบ) =====
+makeToggle("สุ่มผล (เปิด)", 230, function(state)
+    openOn = state
+    openToken += 1
+    if not state then return end
+    local myToken = openToken
+    task.spawn(function()
+        while openOn and myToken == openToken do
+            local ok2, res = pcall(function()
+                return UseKey:InvokeServer(keyBox.Text, modeBtn.Text)
+            end)
+            if ok2 then
+                openCount += 1
+            else
+                lastErr = "เปิด error: " .. tostring(res)
+            end
+            refresh()
+            task.wait(getDelay(openDelayBox))
+        end
+    end)
+end)
+
+-- ===== ลากหน้าต่าง (รองรับมือถือ) =====
+do
+    local dragging, dragStart, startPos
+    title.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = main.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - dragStart
+            main.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y
+            )
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+-- ===== ย่อ/ขยาย =====
+local minimized = false
+minBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    body.Visible = not minimized
+    main.Size = minimized and UDim2.new(0, 240, 0, 32) or UDim2.new(0, 240, 0, FULL_H)
+    minBtn.Text = minimized and "+" or "–"
+end)
